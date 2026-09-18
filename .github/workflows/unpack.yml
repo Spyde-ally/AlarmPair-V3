@@ -44,7 +44,7 @@ jobs:
           rm -rf app gradle server
           rm -f build.gradle gradle.properties gradlew settings.gradle README.md
 
-          cp -a "$SRC"/. .
+          rsync -a --exclude='.github/' "$SRC"/ ./
 
           rm -f "$ZIP"
 
