@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:background="@color/background"
+    android:padding="32dp">
+
+    <TextView
+        android:id="@+id/tvRingTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="⏰ ALARM!"
+        android:textColor="@color/warn"
+        android:textSize="48sp"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:layout_marginBottom="16dp" />
+
+    <TextView
+        android:id="@+id/tvRingSubtitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Your synchronized alarm is ringing"
+        android:textColor="@color/textSecondary"
+        android:textSize="16sp"
+        android:gravity="center"
+        android:layout_marginBottom="48dp" />
+
+    <Button
+        android:id="@+id/btnRingStop"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="STOP / I'M UP"
+        style="@style/DangerButton"
+        android:textSize="18sp"
+        android:padding="20dp" />
+
+</LinearLayout>

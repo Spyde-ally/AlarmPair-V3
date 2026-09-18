@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AlarmPair</string>
+    <string name="create_pair">Create Private Pair</string>
+    <string name="join_pair">Join with Invite Code</string>
+    <string name="set_alarm">SET ALARM</string>
+    <string name="stop_alarm">STOP / I\'M UP</string>
+    <string name="wake_other">WAKE THE OTHER PERSON</string>
+    <string name="im_here">I\'M HERE</string>
+    <string name="submit_goals">SUBMIT GOALS</string>
+    <string name="connecting">Connecting...</string>
+    <string name="waiting_pair">Waiting for the other device...</string>
+    <string name="both_connected">Both devices connected</string>
+</resources>

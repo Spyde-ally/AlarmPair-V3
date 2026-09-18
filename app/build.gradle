@@ -1,0 +1,44 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    buildFeatures { buildConfig true }
+    namespace 'com.alarmpair.app'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.alarmpair.app'
+        minSdk 23
+        targetSdk 35
+        versionCode 3
+        versionName '3.1'
+        buildConfigField 'String', 'SERVER_URL', '"wss://alarmpair-server.onrender.com"'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+        }
+        release {
+            minifyEnabled false
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.15.0'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'com.google.android.material:material:1.12.0'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+}
