@@ -1,0 +1,65 @@
+name: Unpack AlarmPair V3
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find and extract V3 ZIP
+        run: |
+          set -e
+
+          ZIP="$(find . -maxdepth 1 -type f -iname '*.zip' | head -n 1)"
+
+          if [ -z "$ZIP" ]; then
+            echo "No ZIP file found."
+            exit 1
+          fi
+
+          echo "Using: $ZIP"
+
+          rm -rf /tmp/alarmpair-v3
+          mkdir -p /tmp/alarmpair-v3
+
+          unzip -q "$ZIP" -d /tmp/alarmpair-v3
+
+          ROOT="$(find /tmp/alarmpair-v3 -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+
+          if [ -n "$ROOT" ]; then
+            echo "Archive root: $ROOT"
+            SRC="$ROOT"
+          else
+            SRC="/tmp/alarmpair-v3"
+          fi
+
+          rm -rf app gradle server
+          rm -f build.gradle gradle.properties gradlew settings.gradle README.md
+
+          cp -a "$SRC"/. .
+
+          rm -f "$ZIP"
+
+          chmod +x gradlew || true
+
+      - name: Commit extracted project
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "Nothing to commit."
+          else
+            git commit -m "Install AlarmPair V3 project [skip ci]"
+            git push
+          fi
