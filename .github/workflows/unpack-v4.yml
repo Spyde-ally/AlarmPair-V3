@@ -1,0 +1,63 @@
+name: Replace V3 with V4
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  replace-project:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find and extract V4 ZIP
+        run: |
+          ZIP=$(find . -maxdepth 1 -type f -iname '*AlarmPairV4*.zip' | head -n 1)
+
+          if [ -z "$ZIP" ]; then
+            echo "AlarmPairV4.zip not found"
+            exit 1
+          fi
+
+          echo "Using: $ZIP"
+
+          mkdir -p /tmp/v4
+          unzip -q "$ZIP" -d /tmp/v4
+
+          echo "Extracted files:"
+          find /tmp/v4 -maxdepth 3 -type f | head -100
+
+      - name: Locate V4 project root
+        run: |
+          PROJECT=$(find /tmp/v4 -type f -name 'settings.gradle' -o -name 'settings.gradle.kts' | head -n 1)
+
+          if [ -z "$PROJECT" ]; then
+            echo "Could not find settings.gradle or settings.gradle.kts"
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$PROJECT")
+          echo "V4 project root: $PROJECT_DIR"
+
+          rm -rf app build.gradle build.gradle.kts settings.gradle settings.gradle.kts gradle.properties gradle
+          cp -a "$PROJECT_DIR"/. ./
+
+      - name: Remove V4 ZIP
+        run: |
+          rm -f AlarmPairV4.zip
+          rm -f AlarmPairV4*.zip
+
+      - name: Commit V4 project
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+          git commit -m "Upgrade AlarmPair project to V4" || echo "No changes to commit"
+          git push
