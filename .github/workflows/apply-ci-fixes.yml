@@ -1,0 +1,306 @@
+name: Apply AlarmPair CI Fixes
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fixes:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout current branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Create server package.json
+        run: |
+          cat > server/package.json <<'EOF'
+          {
+            "name": "alarmpair-server",
+            "version": "3.0.0",
+            "private": true,
+            "scripts": {
+              "start": "node server.js",
+              "test": "node --test"
+            },
+            "dependencies": {
+              "ws": "^8.18.0"
+            },
+            "engines": {
+              "node": ">=18"
+            }
+          }
+          EOF
+
+      - name: Create integration test
+        run: |
+          mkdir -p server/test
+
+          cat > server/test/server.test.js <<'EOF'
+          const test = require("node:test");
+          const assert = require("node:assert/strict");
+          const { spawn } = require("node:child_process");
+          const http = require("node:http");
+          const WebSocket = require("ws");
+
+          let processHandle;
+          let port;
+
+          function httpGet(path) {
+            return new Promise((resolve, reject) => {
+              http.get(`http://127.0.0.1:${port}${path}`, response => {
+                let body = "";
+
+                response.on("data", chunk => {
+                  body += chunk;
+                });
+
+                response.on("end", () => {
+                  try {
+                    resolve({
+                      statusCode: response.statusCode,
+                      body: JSON.parse(body)
+                    });
+                  } catch (error) {
+                    reject(error);
+                  }
+                });
+              }).on("error", reject);
+            });
+          }
+
+          function openSocket() {
+            return new Promise((resolve, reject) => {
+              const socket = new WebSocket(`ws://127.0.0.1:${port}`);
+
+              socket.once("open", () => resolve(socket));
+              socket.once("error", reject);
+            });
+          }
+
+          function nextMessage(socket) {
+            return new Promise((resolve, reject) => {
+              const onMessage = data => {
+                cleanup();
+
+                try {
+                  resolve(JSON.parse(data.toString()));
+                } catch (error) {
+                  reject(error);
+                }
+              };
+
+              const onError = error => {
+                cleanup();
+                reject(error);
+              };
+
+              function cleanup() {
+                socket.off("message", onMessage);
+                socket.off("error", onError);
+              }
+
+              socket.once("message", onMessage);
+              socket.once("error", onError);
+            });
+          }
+
+          function sendAndReceive(socket, message) {
+            socket.send(JSON.stringify(message));
+            return nextMessage(socket);
+          }
+
+          test.before(async () => {
+            port = 18080 + Math.floor(Math.random() * 1000);
+
+            processHandle = spawn(process.execPath, ["server.js"], {
+              cwd: process.cwd(),
+              env: {
+                ...process.env,
+                PORT: String(port)
+              },
+              stdio: "ignore"
+            });
+
+            for (let attempt = 0; attempt < 30; attempt += 1) {
+              try {
+                const result = await httpGet("/");
+
+                if (result.body.ok === true) {
+                  return;
+                }
+              } catch {
+                await new Promise(resolve => setTimeout(resolve, 100));
+              }
+            }
+
+            throw new Error("Server did not start");
+          });
+
+          test.after(() => {
+            processHandle?.kill("SIGTERM");
+          });
+
+          test("health endpoint responds", async () => {
+            const result = await httpGet("/");
+
+            assert.equal(result.statusCode, 200);
+            assert.equal(result.body.ok, true);
+            assert.equal(result.body.service, "AlarmPair v3");
+          });
+
+          test("two devices can create and join a private pair", async () => {
+            const deviceA = await openSocket();
+            const deviceB = await openSocket();
+
+            const pairedA = await sendAndReceive(deviceA, {
+              type: "createPair"
+            });
+
+            assert.equal(pairedA.type, "paired");
+            assert.equal(pairedA.role, "A");
+            assert.ok(pairedA.invite);
+            assert.ok(pairedA.deviceToken);
+
+            const pairedBPromise = nextMessage(deviceB);
+
+            deviceB.send(JSON.stringify({
+              type: "joinPair",
+              invite: pairedA.invite
+            }));
+
+            const pairedB = await pairedBPromise;
+
+            assert.equal(pairedB.type, "paired");
+            assert.equal(pairedB.role, "B");
+            assert.ok(pairedB.deviceToken);
+
+            deviceA.close();
+            deviceB.close();
+          });
+
+          test("server rejects an invalid alarm time", async () => {
+            const device = await openSocket();
+
+            const paired = await sendAndReceive(device, {
+              type: "createPair"
+            });
+
+            assert.equal(paired.type, "paired");
+
+            const response = await sendAndReceive(device, {
+              type: "setAlarm",
+              targetAt: Date.now() - 1000
+            });
+
+            assert.equal(response.type, "error");
+            assert.match(response.message, /Invalid alarm time/);
+
+            device.close();
+          });
+          EOF
+
+      - name: Install server dependencies and generate lockfile
+        run: |
+          cd server
+          npm install --no-audit --no-fund
+
+      - name: Validate server
+        run: |
+          node --check server/server.js
+          npm test --prefix server
+
+      - name: Update Android workflow
+        run: |
+          cat > .github/workflows/android.yml <<'EOF'
+          name: Build AlarmPair APK
+
+          on:
+            workflow_dispatch:
+            push:
+              branches:
+                - main
+                - 'fix/**'
+            pull_request:
+              branches:
+                - main
+
+          permissions:
+            contents: read
+
+          jobs:
+            test-server:
+              runs-on: ubuntu-latest
+
+              steps:
+                - name: Checkout
+                  uses: actions/checkout@v4
+
+                - name: Set up Node.js
+                  uses: actions/setup-node@v4
+                  with:
+                    node-version: '22'
+                    cache: npm
+                    cache-dependency-path: server/package-lock.json
+
+                - name: Install server dependencies
+                  run: npm ci --prefix server --no-audit --no-fund
+
+                - name: Validate server syntax
+                  run: node --check server/server.js
+
+                - name: Run server tests
+                  run: npm test --prefix server
+
+            build:
+              needs: test-server
+              runs-on: ubuntu-latest
+
+              steps:
+                - name: Checkout
+                  uses: actions/checkout@v4
+
+                - name: Set up JDK 17
+                  uses: actions/setup-java@v4
+                  with:
+                    distribution: temurin
+                    java-version: '17'
+
+                - name: Build Debug APK
+                  run: |
+                    chmod +x ./gradlew
+                    ./gradlew assembleDebug --stacktrace
+
+                - name: Upload APK
+                  uses: actions/upload-artifact@v4
+                  with:
+                    name: AlarmPair-debug
+                    path: app/build/outputs/apk/debug/app-debug.apk
+          EOF
+
+      - name: Show changed files
+        run: |
+          git status --short
+
+      - name: Commit all fixes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add server/package.json
+          git add server/package-lock.json
+          git add server/test/server.test.js
+          git add .github/workflows/android.yml
+
+          git commit -m "Fix server CI tests and Android build workflow" || echo "No changes to commit"
+          git push origin HEAD:${{ github.ref_name }}
