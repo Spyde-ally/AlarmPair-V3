@@ -34,7 +34,7 @@ jobs:
           set -e
           test -f server/server.js
           test -f server/package.json
-          test -f server/test/server.test.js
+          test -f server/server.test.js
 
       - name: Install server dependencies
         run: |
