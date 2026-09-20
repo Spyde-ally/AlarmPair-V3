@@ -33,10 +33,13 @@ jobs:
           node-version: '18'
 
       - name: Install server dependencies
-        run: npm ci --prefix server
+        run: npm install --prefix server --no-audit --no-fund
 
       - name: Validate server syntax
         run: node --check server/server.js
+
+      - name: Run server protocol tests
+        run: npm test --prefix server
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
