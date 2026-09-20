@@ -22,5 +22,6 @@ class AlarmRingActivity : AppCompatActivity() {
         startService(Intent(this, AlarmService::class.java).setAction(AlarmService.ACTION_STOP))
         finish()
     }
-    override fun onBackPressed() { }
+    override fun onBackPressed() {
+    super.onBackPressed()
 }
