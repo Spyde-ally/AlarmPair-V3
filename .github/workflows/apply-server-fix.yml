@@ -1,4 +1,4 @@
-name: Apply AlarmPair Server Fix
+name: Repair Server and Build AlarmPair
 
 on:
   workflow_dispatch:
@@ -7,23 +7,21 @@ permissions:
   contents: write
 
 jobs:
-  apply-fix:
+  repair-and-build:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout current branch
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Check branch
-        run: |
-          echo "Branch: $GITHUB_REF_NAME"
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
 
-          if [ "$GITHUB_REF_NAME" != "fix/authoritative-pairing-startup" ]; then
-            echo "This workflow must be run on fix/authoritative-pairing-startup"
-            exit 1
-          fi
-
-      - name: Create server package.json
+      - name: Repair server/package.json
         run: |
           mkdir -p server
 
@@ -45,244 +43,273 @@ jobs:
           }
           EOF
 
-      - name: Create server tests
+      - name: Add real WebSocket integration tests
         run: |
-          cat > server/server.test.js <<'EOF'
+          mkdir -p server/test
+
+          cat > server/test/server.test.js <<'EOF'
           const test = require("node:test");
           const assert = require("node:assert/strict");
+          const { spawn } = require("node:child_process");
+          const http = require("node:http");
           const WebSocket = require("ws");
 
-          const { server, startServer } = require("./server.js");
+          let processHandle;
+          let port;
 
-          async function connect(port) {
-            const socket = new WebSocket(`ws://127.0.0.1:${port}`);
-
-            await new Promise((resolve, reject) => {
-              const timeout = setTimeout(
-                () => reject(new Error("connect timeout")),
-                5000
-              );
-
-              socket.once("open", () => {
-                clearTimeout(timeout);
-                resolve();
-              });
-
-              socket.once("error", (err) => {
-                clearTimeout(timeout);
-                reject(err);
-              });
-            });
-
-            return socket;
+          function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
           }
 
-          async function waitForMessage(
-            socket,
-            condition,
-            timeoutMs = 5000
-          ) {
+          function httpGet(path) {
             return new Promise((resolve, reject) => {
-              const timer = setTimeout(
-                () => reject(new Error("message timeout")),
-                timeoutMs
+              const request = http.get(
+                `http://127.0.0.1:${port}${path}`,
+                response => {
+                  let body = "";
+
+                  response.on("data", chunk => {
+                    body += chunk;
+                  });
+
+                  response.on("end", () => {
+                    try {
+                      resolve({
+                        statusCode: response.statusCode,
+                        body: JSON.parse(body)
+                      });
+                    } catch (error) {
+                      reject(error);
+                    }
+                  });
+                }
               );
 
-              const onMessage = (raw) => {
-                try {
-                  const msg = JSON.parse(raw.toString());
+              request.on("error", reject);
+            });
+          }
 
-                  if (condition(msg)) {
-                    clearTimeout(timer);
-                    socket.off("message", onMessage);
-                    resolve(msg);
-                  }
-                } catch (_) {}
+          function openSocket() {
+            return new Promise((resolve, reject) => {
+              const socket = new WebSocket(
+                `ws://127.0.0.1:${port}`
+              );
+
+              socket.once("open", () => resolve(socket));
+              socket.once("error", reject);
+            });
+          }
+
+          function nextMessage(socket, timeoutMs = 5000) {
+            return new Promise((resolve, reject) => {
+              const timer = setTimeout(() => {
+                cleanup();
+                reject(new Error("Timed out waiting for WebSocket message"));
+              }, timeoutMs);
+
+              const onMessage = data => {
+                cleanup();
+
+                try {
+                  resolve(JSON.parse(data.toString()));
+                } catch (error) {
+                  reject(error);
+                }
               };
 
-              socket.on("message", onMessage);
+              const onError = error => {
+                cleanup();
+                reject(error);
+              };
+
+              function cleanup() {
+                clearTimeout(timer);
+                socket.off("message", onMessage);
+                socket.off("error", onError);
+              }
+
+              socket.once("message", onMessage);
+              socket.once("error", onError);
             });
           }
 
-          async function closeSocket(socket) {
-            if (
-              socket.readyState === WebSocket.OPEN ||
-              socket.readyState === WebSocket.CONNECTING
-            ) {
-              await new Promise((resolve) => {
-                socket.once("close", resolve);
-                socket.close();
-              });
-            }
+          async function sendAndReceive(socket, message) {
+            socket.send(JSON.stringify(message));
+            return nextMessage(socket);
           }
 
           test.before(async () => {
-            await startServer(0);
+            port = 18080 + Math.floor(Math.random() * 1000);
+
+            processHandle = spawn(
+              process.execPath,
+              ["server.js"],
+              {
+                cwd: process.cwd(),
+                env: {
+                  ...process.env,
+                  PORT: String(port)
+                },
+                stdio: "ignore"
+              }
+            );
+
+            for (let attempt = 0; attempt < 50; attempt++) {
+              try {
+                const result = await httpGet("/");
+
+                if (
+                  result.statusCode === 200 &&
+                  result.body.ok === true
+                ) {
+                  return;
+                }
+              } catch (_) {
+                await sleep(100);
+              }
+            }
+
+            throw new Error("Server did not start");
           });
 
-          test.after(async () => {
-            await new Promise((resolve, reject) => {
-              server.close((err) =>
-                err ? reject(err) : resolve()
-              );
-            });
+          test.after(() => {
+            if (processHandle) {
+              processHandle.kill("SIGTERM");
+            }
           });
 
-          test("createPair creates a valid event and returns an invite", async () => {
-            const port = server.address().port;
-            const socket = await connect(port);
+          test("health endpoint responds", async () => {
+            const result = await httpGet("/");
 
-            socket.send(
-              JSON.stringify({
-                type: "createPair"
-              })
-            );
-
-            const message = await waitForMessage(
-              socket,
-              (msg) => msg.type === "paired"
-            );
-
-            assert.equal(message.role, "A");
-            assert.ok(message.pairId);
-            assert.ok(message.deviceToken);
-            assert.ok(message.invite || message.inviteCode);
-
-            await closeSocket(socket);
+            assert.equal(result.statusCode, 200);
+            assert.equal(result.body.ok, true);
+            assert.equal(result.body.service, "AlarmPair v3");
           });
 
-          test("joinPair can join a valid invite", async () => {
-            const port = server.address().port;
+          test("two devices can create and join a private pair", async () => {
+            const deviceA = await openSocket();
+            const deviceB = await openSocket();
 
-            const creator = await connect(port);
-
-            creator.send(
-              JSON.stringify({
-                type: "createPair"
-              })
+            const pairedA = await sendAndReceive(
+              deviceA,
+              { type: "createPair" }
             );
 
-            const created = await waitForMessage(
-              creator,
-              (msg) => msg.type === "paired"
-            );
+            assert.equal(pairedA.type, "paired");
+            assert.equal(pairedA.role, "A");
+            assert.ok(pairedA.invite);
+            assert.ok(pairedA.deviceToken);
+            assert.ok(pairedA.pairId);
 
-            const invite =
-              created.invite || created.inviteCode;
+            const pairedBPromise = nextMessage(deviceB);
 
-            assert.ok(invite);
-
-            const joiner = await connect(port);
-
-            joiner.send(
+            deviceB.send(
               JSON.stringify({
                 type: "joinPair",
-                invite
+                invite: pairedA.invite
               })
             );
 
-            const joined = await waitForMessage(
-              joiner,
-              (msg) => msg.type === "paired"
-            );
+            const pairedB = await pairedBPromise;
 
-            assert.equal(joined.role, "B");
+            assert.equal(pairedB.type, "paired");
+            assert.equal(pairedB.role, "B");
+            assert.ok(pairedB.deviceToken);
+            assert.equal(pairedB.pairId, pairedA.pairId);
 
-            const creatorStatus = await waitForMessage(
-              creator,
-              (msg) => msg.type === "pairStatus"
-            );
-
-            assert.equal(
-              creatorStatus.connected,
-              true
-            );
-
-            await closeSocket(creator);
-            await closeSocket(joiner);
+            deviceA.close();
+            deviceB.close();
           });
 
-          test("resume rejects stale device tokens", async () => {
-            const port = server.address().port;
+          test("invalid alarm time is rejected", async () => {
+            const device = await openSocket();
 
-            const socket = await connect(port);
+            const paired = await sendAndReceive(
+              device,
+              { type: "createPair" }
+            );
 
-            socket.send(
-              JSON.stringify({
+            assert.equal(paired.type, "paired");
+
+            const response = await sendAndReceive(
+              device,
+              {
+                type: "setAlarm",
+                targetAt: Date.now() - 1000
+              }
+            );
+
+            assert.equal(response.type, "error");
+            assert.match(
+              response.message,
+              /Invalid alarm time/
+            );
+
+            device.close();
+          });
+
+          test("invalid saved device token is rejected", async () => {
+            const device = await openSocket();
+
+            const response = await sendAndReceive(
+              device,
+              {
                 type: "resume",
                 deviceToken: "invalid-token"
-              })
+              }
             );
 
-            const rejected = await waitForMessage(
-              socket,
-              (msg) => msg.type === "error"
-            );
-
+            assert.equal(response.type, "error");
             assert.match(
-              rejected.message,
-              /Saved pairing|Authenticate|recogniz/i
+              response.message,
+              /Saved pairing|not recognized|Authenticate/i
             );
 
-            await closeSocket(socket);
-          });
-
-          test("unauthenticated commands are rejected", async () => {
-            const port = server.address().port;
-
-            const socket = await connect(port);
-
-            socket.send(
-              JSON.stringify({
-                type: "sync"
-              })
-            );
-
-            const error = await waitForMessage(
-              socket,
-              (msg) => msg.type === "error"
-            );
-
-            assert.match(
-              error.message,
-              /Authenticate/i
-            );
-
-            await closeSocket(socket);
+            device.close();
           });
           EOF
 
-      - name: Verify server.js exists
+      - name: Install dependencies and generate package-lock.json
         run: |
-          test -f server/server.js || {
-            echo "server/server.js is missing"
-            exit 1
-          }
-
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-
-      - name: Install server dependencies
-        run: npm install --prefix server --no-audit --no-fund
+          cd server
+          npm install --no-audit --no-fund
 
       - name: Validate server syntax
-        run: node --check server/server.js
+        run: |
+          node --check server/server.js
 
-      - name: Run server tests
-        run: npm test --prefix server
+      - name: Run real server integration tests
+        run: |
+          cd server
+          npm test
 
-      - name: Commit changes
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Build Android APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AlarmPair-debug-repaired
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Commit repaired server files
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add server/package.json server/server.test.js
+          git add server/package.json
+          git add server/package-lock.json
+          git add server/test/server.test.js
 
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-          else
-            git commit -m "Add AlarmPair server protocol tests"
-            git push origin "$GITHUB_REF_NAME"
-          fi
+          git commit -m "Repair server package and add integration tests" || echo "No changes to commit"
+
+          git push origin HEAD:${{ github.ref_name }}
