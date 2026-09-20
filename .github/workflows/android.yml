@@ -5,6 +5,10 @@ on:
   push:
     branches:
       - main
+      - 'fix/**'
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -22,6 +26,17 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+
+      - name: Set up Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install server dependencies
+        run: npm ci --prefix server
+
+      - name: Validate server syntax
+        run: node --check server/server.js
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
