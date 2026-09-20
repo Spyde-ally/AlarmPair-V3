@@ -24,4 +24,5 @@ class AlarmRingActivity : AppCompatActivity() {
     }
     override fun onBackPressed() {
     super.onBackPressed()
-}
+    }
+}    
