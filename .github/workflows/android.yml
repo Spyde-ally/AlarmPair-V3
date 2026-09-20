@@ -1,4 +1,4 @@
-name: Build AlarmPair APK
+name: AlarmPair CI and APK
 
 on:
   workflow_dispatch:
@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - 'fix/**'
+      - 'Spyde-ally-patch-1'
   pull_request:
     branches:
       - main
@@ -14,259 +15,51 @@ permissions:
   contents: read
 
 jobs:
-  build:
+
+  server-preflight:
+    name: Server preflight
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      # --------------------------------------------------
-      # AUTOMATIC SERVER REPAIR
-      
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
 
-                - name: Automatically create server integration tests
-        shell: bash
+      - name: Check server files
         run: |
           set -e
+          test -f server/server.js
+          test -f server/package.json
+          test -f server/test/server.test.js
 
-          mkdir -p server/test
+      - name: Install server dependencies
+        run: |
+          npm install \
+            --prefix server \
+            --no-audit \
+            --no-fund
 
-          cat > server/test/server.test.js <<'EOF'
-          const test = require("node:test");
-          const assert = require("node:assert/strict");
-          const { spawn } = require("node:child_process");
-          const http = require("node:http");
-          const WebSocket = require("ws");
+      - name: Validate server syntax
+        run: |
+          node --check server/server.js
 
-          let serverProcess;
-          let port;
+      - name: Run server tests
+        run: |
+          npm test --prefix server
 
-          function sleep(ms) {
-            return new Promise(resolve => setTimeout(resolve, ms));
-          }
 
-          function httpGet(path) {
-            return new Promise((resolve, reject) => {
-              const req = http.get(
-                `http://127.0.0.1:${port}${path}`,
-                res => {
-                  let body = "";
+  android-preflight:
+    name: Android preflight
+    runs-on: ubuntu-latest
+    needs: server-preflight
 
-                  res.on("data", chunk => {
-                    body += chunk;
-                  });
-
-                  res.on("end", () => {
-                    try {
-                      resolve({
-                        statusCode: res.statusCode,
-                        body: JSON.parse(body)
-                      });
-                    } catch (error) {
-                      reject(error);
-                    }
-                  });
-                }
-              );
-
-              req.on("error", reject);
-            });
-          }
-
-          function openSocket() {
-            return new Promise((resolve, reject) => {
-              const socket = new WebSocket(
-                `ws://127.0.0.1:${port}`
-              );
-
-              socket.once("open", () => resolve(socket));
-              socket.once("error", reject);
-            });
-          }
-
-          function nextMessage(socket, timeout = 5000) {
-            return new Promise((resolve, reject) => {
-              const timer = setTimeout(() => {
-                cleanup();
-                reject(
-                  new Error("Timed out waiting for WebSocket message")
-                );
-              }, timeout);
-
-              function onMessage(data) {
-                cleanup();
-
-                try {
-                  resolve(JSON.parse(data.toString()));
-                } catch (error) {
-                  reject(error);
-                }
-              }
-
-              function onError(error) {
-                cleanup();
-                reject(error);
-              }
-
-              function cleanup() {
-                clearTimeout(timer);
-                socket.off("message", onMessage);
-                socket.off("error", onError);
-              }
-
-              socket.once("message", onMessage);
-              socket.once("error", onError);
-            });
-          }
-
-          async function sendAndReceive(socket, message) {
-            socket.send(JSON.stringify(message));
-            return nextMessage(socket);
-          }
-
-          test.before(async () => {
-            port = 18080 + Math.floor(Math.random() * 1000);
-
-            serverProcess = spawn(
-              process.execPath,
-              ["server.js"],
-              {
-                cwd: process.cwd(),
-                env: {
-                  ...process.env,
-                  PORT: String(port)
-                },
-                stdio: "pipe"
-              }
-            );
-
-            serverProcess.stderr.on("data", data => {
-              process.stderr.write(data);
-            });
-
-            serverProcess.stdout.on("data", data => {
-              process.stdout.write(data);
-            });
-
-            for (let attempt = 0; attempt < 50; attempt++) {
-              try {
-                const result = await httpGet("/");
-
-                if (
-                  result.statusCode === 200 &&
-                  result.body.ok === true
-                ) {
-                  return;
-                }
-              } catch (_) {
-                await sleep(100);
-              }
-            }
-
-            throw new Error(
-              "AlarmPair server failed to start"
-            );
-          });
-
-          test.after(() => {
-            if (serverProcess) {
-              serverProcess.kill("SIGTERM");
-            }
-          });
-
-          test("health endpoint responds", async () => {
-            const result = await httpGet("/");
-
-            assert.equal(result.statusCode, 200);
-            assert.equal(result.body.ok, true);
-            assert.equal(
-              result.body.service,
-              "AlarmPair v3"
-            );
-          });
-
-          test("two devices can create and join a private pair", async () => {
-            const deviceA = await openSocket();
-            const deviceB = await openSocket();
-
-            const pairedA = await sendAndReceive(
-              deviceA,
-              {
-                type: "createPair"
-              }
-            );
-
-            assert.equal(pairedA.type, "paired");
-            assert.equal(pairedA.role, "A");
-            assert.ok(
-              pairedA.invite,
-              "Create pair must return an invite"
-            );
-            assert.ok(
-              pairedA.deviceToken,
-              "Create pair must return a device token"
-            );
-
-            const pairedBPromise = nextMessage(deviceB);
-
-            deviceB.send(
-              JSON.stringify({
-                type: "joinPair",
-                invite: pairedA.invite
-              })
-            );
-
-            const pairedB = await pairedBPromise;
-
-            assert.equal(pairedB.type, "paired");
-            assert.equal(pairedB.role, "B");
-            assert.ok(
-              pairedB.deviceToken,
-              "Join pair must return a device token"
-            );
-
-            assert.notEqual(
-              pairedA.role,
-              pairedB.role
-            );
-
-            deviceA.close();
-            deviceB.close();
-          });
-
-          test("invalid alarm time is rejected", async () => {
-            const device = await openSocket();
-
-            const paired = await sendAndReceive(
-              device,
-              {
-                type: "createPair"
-              }
-            );
-
-            assert.equal(paired.type, "paired");
-
-            const response = await sendAndReceive(
-              device,
-              {
-                type: "setAlarm",
-                targetAt: Date.now() - 1000
-              }
-            );
-
-            assert.equal(response.type, "error");
-            assert.match(
-              response.message,
-              /Invalid alarm time/
-            );
-
-            device.close();
-          });
-          EOF
-      # --------------------------------------------------
-      # ANDROID BUILD
-      # --------------------------------------------------
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -274,14 +67,56 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Make Gradle wrapper executable
-        run: chmod +x ./gradlew
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Show versions
+        run: |
+          java -version
+          gradle --version
+
+      - name: Compile Kotlin
+        run: |
+          gradle compileDebugKotlin --stacktrace
+
+      - name: Run Android lint
+        run: |
+          gradle lintDebug --stacktrace
+
+      - name: Run Android unit tests
+        run: |
+          gradle testDebugUnitTest --stacktrace
+
+
+  build-apk:
+    name: Build Debug APK
+    runs-on: ubuntu-latest
+    needs: android-preflight
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: |
+          gradle assembleDebug --stacktrace
 
-      - name: Upload APK
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: AlarmPair-debug
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
