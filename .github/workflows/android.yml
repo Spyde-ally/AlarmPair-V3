@@ -11,21 +11,68 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      # ==========================================
+      # 1. CHECKOUT
+      # ==========================================
+
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # --------------------------------------------------
-      # AUTOMATIC SERVER REPAIR
-      
+      # ==========================================
+      # 2. NODE
+      # ==========================================
 
-                - name: Automatically create server integration tests
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # ==========================================
+      # 3. REPAIR package.json
+      # ==========================================
+
+      - name: Repair server package.json
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p server
+
+          cat > server/package.json <<'EOF'
+          {
+            "name": "alarmpair-server",
+            "version": "3.0.0",
+            "private": true,
+            "scripts": {
+              "start": "node server.js",
+              "test": "node --test"
+            },
+            "dependencies": {
+              "ws": "^8.18.0"
+            },
+            "engines": {
+              "node": ">=18"
+            }
+          }
+          EOF
+
+          echo "===== server/package.json ====="
+          cat server/package.json
+
+      # ==========================================
+      # 4. CREATE SERVER TESTS
+      # ==========================================
+
+      - name: Create server integration tests
         shell: bash
         run: |
           set -e
@@ -90,7 +137,9 @@ jobs:
               const timer = setTimeout(() => {
                 cleanup();
                 reject(
-                  new Error("Timed out waiting for WebSocket message")
+                  new Error(
+                    "Timed out waiting for WebSocket message"
+                  )
                 );
               }, timeout);
 
@@ -126,7 +175,9 @@ jobs:
           }
 
           test.before(async () => {
-            port = 18080 + Math.floor(Math.random() * 1000);
+            port =
+              18080 +
+              Math.floor(Math.random() * 1000);
 
             serverProcess = spawn(
               process.execPath,
@@ -141,15 +192,25 @@ jobs:
               }
             );
 
-            serverProcess.stderr.on("data", data => {
-              process.stderr.write(data);
-            });
+            serverProcess.stdout.on(
+              "data",
+              data => {
+                process.stdout.write(data);
+              }
+            );
 
-            serverProcess.stdout.on("data", data => {
-              process.stdout.write(data);
-            });
+            serverProcess.stderr.on(
+              "data",
+              data => {
+                process.stderr.write(data);
+              }
+            );
 
-            for (let attempt = 0; attempt < 50; attempt++) {
+            for (
+              let attempt = 0;
+              attempt < 50;
+              attempt++
+            ) {
               try {
                 const result = await httpGet("/");
 
@@ -175,98 +236,192 @@ jobs:
             }
           });
 
-          test("health endpoint responds", async () => {
-            const result = await httpGet("/");
+          test(
+            "health endpoint responds",
+            async () => {
+              const result = await httpGet("/");
 
-            assert.equal(result.statusCode, 200);
-            assert.equal(result.body.ok, true);
-            assert.equal(
-              result.body.service,
-              "AlarmPair v3"
-            );
-          });
+              assert.equal(
+                result.statusCode,
+                200
+              );
 
-          test("two devices can create and join a private pair", async () => {
-            const deviceA = await openSocket();
-            const deviceB = await openSocket();
+              assert.equal(
+                result.body.ok,
+                true
+              );
 
-            const pairedA = await sendAndReceive(
-              deviceA,
-              {
-                type: "createPair"
-              }
-            );
+              assert.equal(
+                result.body.service,
+                "AlarmPair v3"
+              );
+            }
+          );
 
-            assert.equal(pairedA.type, "paired");
-            assert.equal(pairedA.role, "A");
-            assert.ok(
-              pairedA.invite,
-              "Create pair must return an invite"
-            );
-            assert.ok(
-              pairedA.deviceToken,
-              "Create pair must return a device token"
-            );
+          test(
+            "two devices can create and join a private pair",
+            async () => {
+              const deviceA = await openSocket();
+              const deviceB = await openSocket();
 
-            const pairedBPromise = nextMessage(deviceB);
+              const pairedA =
+                await sendAndReceive(
+                  deviceA,
+                  {
+                    type: "createPair"
+                  }
+                );
 
-            deviceB.send(
-              JSON.stringify({
-                type: "joinPair",
-                invite: pairedA.invite
-              })
-            );
+              assert.equal(
+                pairedA.type,
+                "paired"
+              );
 
-            const pairedB = await pairedBPromise;
+              assert.equal(
+                pairedA.role,
+                "A"
+              );
 
-            assert.equal(pairedB.type, "paired");
-            assert.equal(pairedB.role, "B");
-            assert.ok(
-              pairedB.deviceToken,
-              "Join pair must return a device token"
-            );
+              assert.ok(
+                pairedA.invite,
+                "Create pair must return an invite"
+              );
 
-            assert.notEqual(
-              pairedA.role,
-              pairedB.role
-            );
+              assert.ok(
+                pairedA.deviceToken,
+                "Create pair must return a device token"
+              );
 
-            deviceA.close();
-            deviceB.close();
-          });
+              const pairedBPromise =
+                nextMessage(deviceB);
 
-          test("invalid alarm time is rejected", async () => {
-            const device = await openSocket();
+              deviceB.send(
+                JSON.stringify({
+                  type: "joinPair",
+                  invite: pairedA.invite
+                })
+              );
 
-            const paired = await sendAndReceive(
-              device,
-              {
-                type: "createPair"
-              }
-            );
+              const pairedB =
+                await pairedBPromise;
 
-            assert.equal(paired.type, "paired");
+              assert.equal(
+                pairedB.type,
+                "paired"
+              );
 
-            const response = await sendAndReceive(
-              device,
-              {
-                type: "setAlarm",
-                targetAt: Date.now() - 1000
-              }
-            );
+              assert.equal(
+                pairedB.role,
+                "B"
+              );
 
-            assert.equal(response.type, "error");
-            assert.match(
-              response.message,
-              /Invalid alarm time/
-            );
+              assert.ok(
+                pairedB.deviceToken,
+                "Join pair must return a device token"
+              );
 
-            device.close();
-          });
+              assert.notEqual(
+                pairedA.role,
+                pairedB.role
+              );
+
+              deviceA.close();
+              deviceB.close();
+            }
+          );
+
+          test(
+            "invalid alarm time is rejected",
+            async () => {
+              const device =
+                await openSocket();
+
+              const paired =
+                await sendAndReceive(
+                  device,
+                  {
+                    type: "createPair"
+                  }
+                );
+
+              assert.equal(
+                paired.type,
+                "paired"
+              );
+
+              const response =
+                await sendAndReceive(
+                  device,
+                  {
+                    type: "setAlarm",
+                    targetAt:
+                      Date.now() - 1000
+                  }
+                );
+
+              assert.equal(
+                response.type,
+                "error"
+              );
+
+              assert.match(
+                response.message,
+                /Invalid alarm time/
+              );
+
+              device.close();
+            }
+          );
           EOF
-      # --------------------------------------------------
-      # ANDROID BUILD
-      # --------------------------------------------------
+
+      # ==========================================
+      # 5. INSTALL + GENERATE LOCKFILE
+      # ==========================================
+
+      - name: Install server dependencies
+        run: |
+          set -e
+          cd server
+          npm install --no-audit --no-fund
+
+      # ==========================================
+      # 6. VERIFY npm CONFIGURATION
+      # ==========================================
+
+      - name: Verify npm configuration
+        run: |
+          set -e
+
+          echo "===== package.json ====="
+          cat server/package.json
+
+          echo "===== npm scripts ====="
+          npm run --prefix server
+
+          echo "===== package-lock exists ====="
+          test -f server/package-lock.json
+
+      # ==========================================
+      # 7. SERVER SYNTAX
+      # ==========================================
+
+      - name: Validate server syntax
+        run: |
+          set -e
+          node --check server/server.js
+
+      # ==========================================
+      # 8. SERVER TESTS
+      # ==========================================
+
+      - name: Run server integration tests
+        run: |
+          set -e
+          npm test --prefix server
+
+      # ==========================================
+      # 9. JAVA
+      # ==========================================
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -274,14 +429,46 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # ==========================================
+      # 10. GRADLE
+      # ==========================================
+
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
 
-      - name: Upload APK
+      # ==========================================
+      # 11. UPLOAD APK
+      # ==========================================
+
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: AlarmPair-debug
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      # ==========================================
+      # 12. SAVE REPAIRED SERVER FILES
+      # ==========================================
+
+      - name: Commit repaired server files
+        shell: bash
+        run: |
+          set -e
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add server/package.json
+          git add server/package-lock.json
+          git add server/test/server.test.js
+
+          git diff --cached --quiet || \
+            git commit -m \
+            "Repair server configuration and integration tests"
+
+          git push origin \
+            HEAD:${{ github.ref_name }}
