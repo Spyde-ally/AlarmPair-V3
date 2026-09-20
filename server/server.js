@@ -193,8 +193,30 @@ wss.on("connection", ws => {
       ws.role = pair.roles.get(token);
       pair.clients.set(token, ws);
       console.log("[server] resume accepted", { pairId, role: ws.role });
-      send(ws, { type: "resumed", role: ws.role, deviceToken: token, pairId, state: publicState(pair) });
-      broadcast(pair, { type: "pairStatus", connected: pair.clients.size === 2, state: publicState(pair) });
+      send(ws, {
+  type: "resumed",
+  role: ws.role,
+  deviceToken: token,
+  pairId,
+  state: publicState(pair)
+});
+
+const pendingWake = pair.pendingManualWake[ws.role];
+
+if (pendingWake) {
+  send(ws, {
+    type: "manualWake",
+    ...pendingWake
+  });
+
+  pair.pendingManualWake[ws.role] = null;
+}
+
+broadcast(pair, {
+  type: "pairStatus",
+  connected: pair.clients.size === 2,
+  state: publicState(pair)
+});
       return;
     }
 
