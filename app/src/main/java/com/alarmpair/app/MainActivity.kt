@@ -229,6 +229,17 @@ class MainActivity : AppCompatActivity() {
     private fun scheduleLocalAlarm(at: Long) { val am = getSystemService(AlarmManager::class.java); val pi = PendingIntent.getBroadcast(this, AlarmReceiver.NOTIF_ID_ALARM, Intent(this, AlarmReceiver::class.java).setAction(AlarmReceiver.ACTION_ALARM), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE); try { am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi) } catch (_: Exception) { am.setExact(AlarmManager.RTC_WAKEUP, at, pi) } }
     private fun cancelLocalAlarm() { val am = getSystemService(AlarmManager::class.java); val pi = PendingIntent.getBroadcast(this, AlarmReceiver.NOTIF_ID_ALARM, Intent(this, AlarmReceiver::class.java).setAction(AlarmReceiver.ACTION_ALARM), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE); am.cancel(pi) }
     private fun updatePanels() { val ready = pairValidated && hasCredentials(); panelPairing.visibility = if (ready) View.GONE else View.VISIBLE; panelAlarm.visibility = if (ready && !alarmActive && status != "COMPLETED") View.VISIBLE else View.GONE; panelAlarmActive.visibility = if (ready && alarmActive) View.VISIBLE else View.GONE; tvStatus.text = when { !serverConnected -> "SERVER DISCONNECTED"; !ready -> "PAIRING REQUIRED"; partnerConnected -> "PAIRED — PARTNER CONNECTED"; else -> "PAIRED — PARTNER DISCONNECTED" }; tvAlarmActiveInfo.text = if (stoppedMe) "⏳ Waiting for your partner…" else "🔔 ALARM RINGING / SCHEDULED" }
-    private fun formatMs(ms: Long): String { val t = max(0, ms / 1000); val h = t / 3600; val m = (t % 3600) / 60; val s = t % 60; return if (h > 0) "%02d:%02d:%02d".format(m = m, h = h, s = s) else "%02d:%02d".format(m, s) }
+    private fun formatMs(ms: Long): String {
+    val t = max(0, ms / 1000)
+    val h = t / 3600
+    val m = (t % 3600) / 60
+    val s = t % 60
+
+    return if (h > 0) {
+        "%02d:%02d:%02d".format(h, m, s)
+    } else {
+        "%02d:%02d".format(m, s)
+    }
+    }
     override fun onDestroy() { handler.removeCallbacks(tick); ws.disconnect(); super.onDestroy() }
 }
