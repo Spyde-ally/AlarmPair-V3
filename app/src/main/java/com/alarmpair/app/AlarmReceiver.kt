@@ -34,9 +34,12 @@ class AlarmReceiver : BroadcastReceiver() {
         val serviceIntent = Intent(context, AlarmService::class.java)
             .setAction(AlarmService.ACTION_START)
             .putExtra("title", title)
-        try { context.startForegroundService(serviceIntent) } catch (_: Exception) { context.startService(serviceIntent) }
-    }
-
+        
+if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+    context.startForegroundService(serviceIntent)
+} else {
+    context.startService(serviceIntent)
+}
     private fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= 26) {
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
