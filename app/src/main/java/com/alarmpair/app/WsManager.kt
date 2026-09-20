@@ -57,7 +57,14 @@ class WsManager(
                     handler.post { onMessage(message) }
                 } catch (e: Exception) { Log.w(TAG, "invalid server message", e) }
             }
-            override fun onFailure(socket: WebSocket, t: Throwable, response: Response?) { handler.post { opened = false; onDisconnected(); scheduleReconnect() } }
+            override fun onFailure(socket: WebSocket, t: Throwable, response: Response?) {
+    Log.e(TAG, "WebSocket FAILED: ${t.message}", t)
+    handler.post {
+        opened = false
+        onDisconnected()
+        scheduleReconnect()
+    }
+            }
             override fun onClosed(socket: WebSocket, code: Int, reason: String) { handler.post { opened = false; onDisconnected(); scheduleReconnect() } }
         })
     }
