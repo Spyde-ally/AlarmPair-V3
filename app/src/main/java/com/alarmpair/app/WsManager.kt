@@ -31,19 +31,32 @@ class WsManager(
     fun connect(afterOpen: (() -> Unit)? = null) { stopped = false; handler.post { connectInternal(afterOpen) } }
     private fun connectInternal(afterOpen: (() -> Unit)? = null) {
         if (stopped) return
-        opened = false; ws?.cancel()
+        opened = false
+        ws?.cancel()
         ws = client.newWebSocket(Request.Builder().url(serverUrl).build(), object : WebSocketListener() {
             override fun onOpen(socket: WebSocket, response: Response) {
                 opened = true; reconnectAttempts = 0
                 handler.post {
-                    Log.d(TAG, "WebSocket opened; authentication is separate from transport connection")
+                    Log.d(TAG, "WebSocket opened; authentication remains separate")
                     onConnected()
                     if (token.isNotBlank()) socket.send(JSONObject().put("type", "resume").put("deviceToken", token).toString())
                     while (queue.isNotEmpty()) socket.send(queue.removeFirst())
                     afterOpen?.invoke()
                 }
             }
-            override fun onMessage(socket: WebSocket, text: String) { try { val message = JSONObject(text); handler.post { onMessage(message) } } catch (e: Exception) { Log.w(TAG, "invalid server message", e) } }
+            override fun onMessage(socket: WebSocket, text: String) {
+                try {
+                    val message = JSONObject(text)
+                    val type = message.optString("type")
+                    if (type == "paired") {
+                        val invite = message.optString("invite", message.optString("inviteCode", ""))
+                        Log.d(TAG, "create/pair response: type=paired pairIdPresent=${message.has("pairId")} invitePresent=${invite.isNotBlank()} inviteLength=${invite.length}")
+                    } else {
+                        Log.d(TAG, "server message: type=$type")
+                    }
+                    handler.post { onMessage(message) }
+                } catch (e: Exception) { Log.w(TAG, "invalid server message", e) }
+            }
             override fun onFailure(socket: WebSocket, t: Throwable, response: Response?) { handler.post { opened = false; onDisconnected(); scheduleReconnect() } }
             override fun onClosed(socket: WebSocket, code: Int, reason: String) { handler.post { opened = false; onDisconnected(); scheduleReconnect() } }
         })

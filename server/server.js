@@ -29,7 +29,9 @@ wss.on("connection", ws => {
       const pairId = rand(), deviceToken = rand(), invite = rand();
       const pair = { id: pairId, invite, clients: new Map([[deviceToken, ws]]), roles: new Map([[deviceToken, "A"]]), alarm: null, status: "PAIRING", goals: { A: null, B: null }, wakeResponses: { A: false, B: false }, wakeCheckDeadlineAt: 0, pendingManualWake: { A: null, B: null }, timer: null };
       pairsById.set(pairId, pair); pairByDevice.set(deviceToken, pairId); ws.clientToken = deviceToken; ws.pairId = pairId; ws.role = "A";
-      console.log("[server] createPair", { pairId, deviceToken }); send(ws, { type: "paired", role: "A", deviceToken, pairId, invite, state: publicState(pair) }); return;
+      console.log("[server] createPair", { pairId, invitePresent: true, inviteLength: invite.length });
+      // Keep both names during the protocol transition; Android reads invite and inviteCode.
+      send(ws, { type: "paired", role: "A", deviceToken, pairId, invite, inviteCode: invite, state: publicState(pair) }); return;
     }
     if (m.type === "joinPair") {
       if (ws.pairId) return send(ws, { type: "error", message: "This connection is already authenticated." });
@@ -37,11 +39,11 @@ wss.on("connection", ws => {
       for (const [id, candidate] of pairsById) if (candidate.invite === invite && candidate.roles.size === 1 && candidate.clients.size <= 1) { pairId = id; pair = candidate; break; }
       if (!pair) return send(ws, { type: "error", message: "Invite invalid or already used." });
       const deviceToken = rand(); pair.clients.set(deviceToken, ws); pair.roles.set(deviceToken, "B"); pair.invite = null; pair.status = "PAIRED"; pairByDevice.set(deviceToken, pairId); ws.clientToken = deviceToken; ws.pairId = pairId; ws.role = "B";
-      console.log("[server] joinPair", { pairId, deviceToken }); send(ws, { type: "paired", role: "B", deviceToken, pairId, state: publicState(pair) }); broadcast(pair, { type: "pairStatus", connected: true, state: publicState(pair) }); return;
+      console.log("[server] joinPair", { pairId, invitePresent: true }); send(ws, { type: "paired", role: "B", deviceToken, pairId, state: publicState(pair) }); broadcast(pair, { type: "pairStatus", connected: true, state: publicState(pair) }); return;
     }
     if (m.type === "resume") {
       const token = String(m.deviceToken || ""); const pairId = pairByDevice.get(token); const pair = pairId && pairsById.get(pairId);
-      if (!pair || pair.roles.get(token) == null) { console.warn("[server] resume rejected", { tokenPresent: !!token, pairId }); return send(ws, { type: "error", message: "Saved pairing not recognized. Please create or join a new pair." }); }
+      if (!pair || pair.roles.get(token) == null) { console.warn("[server] resume rejected", { tokenPresent: !!token, pairIdPresent: !!pairId }); return send(ws, { type: "error", message: "Saved pairing not recognized. Please create or join a new pair." }); }
       const old = pair.clients.get(token); if (old && old !== ws) { old.clientToken = null; old.pairId = null; old.role = null; try { old.close(4001, "replaced") } catch (_) {} }
       ws.clientToken = token; ws.pairId = pairId; ws.role = pair.roles.get(token); pair.clients.set(token, ws);
       console.log("[server] resume accepted", { pairId, role: ws.role }); send(ws, { type: "resumed", role: ws.role, deviceToken: token, pairId, state: publicState(pair) }); broadcast(pair, { type: "pairStatus", connected: pair.clients.size === 2, state: publicState(pair) }); return;
