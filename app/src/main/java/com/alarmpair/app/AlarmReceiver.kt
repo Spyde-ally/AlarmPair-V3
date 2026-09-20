@@ -1,12 +1,12 @@
 package com.alarmpair.app
 
-import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import androidx.core.content.ContextCompat
 
 class AlarmReceiver : BroadcastReceiver() {
     companion object {
@@ -21,9 +21,13 @@ class AlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
             ACTION_ALARM -> startRing(context, "⏰ AlarmPair — time to wake up!")
-            ACTION_MANUAL_WAKE -> startRing(context, "🔔 Wake up! ${intent.getStringExtra("triggeredBy") ?: "Your partner"} is calling you!")
+            ACTION_MANUAL_WAKE -> startRing(
+                context,
+                "🔔 Wake up! ${intent.getStringExtra("triggeredBy") ?: "Your partner"} is calling you!"
+            )
             ACTION_STOP -> {
-                val stop = Intent(context, AlarmService::class.java).setAction(AlarmService.ACTION_STOP)
+                val stop = Intent(context, AlarmService::class.java)
+                    .setAction(AlarmService.ACTION_STOP)
                 context.startService(stop)
             }
         }
@@ -31,20 +35,28 @@ class AlarmReceiver : BroadcastReceiver() {
 
     private fun startRing(context: Context, title: String) {
         ensureChannel(context)
+
         val serviceIntent = Intent(context, AlarmService::class.java)
             .setAction(AlarmService.ACTION_START)
             .putExtra("title", title)
-        
-if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-    context.startForegroundService(serviceIntent)
-} else {
-    context.startService(serviceIntent)
-}
+
+        ContextCompat.startForegroundService(context, serviceIntent)
+    }
+
     private fun ensureChannel(context: Context) {
-        if (Build.VERSION.SDK_INT >= 26) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            val ch = NotificationChannel(CHANNEL_ID, "AlarmPair Alarms", NotificationManager.IMPORTANCE_HIGH)
-            ch.setSound(android.provider.Settings.System.DEFAULT_ALARM_ALERT_URI, android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_ALARM).build())
+            val ch = NotificationChannel(
+                CHANNEL_ID,
+                "AlarmPair Alarms",
+                NotificationManager.IMPORTANCE_HIGH
+            )
+            ch.setSound(
+                android.provider.Settings.System.DEFAULT_ALARM_ALERT_URI,
+                android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_ALARM)
+                    .build()
+            )
             ch.enableVibration(true)
             nm.createNotificationChannel(ch)
         }
